@@ -1,0 +1,516 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>关卡编辑台 - 星界神话</title>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      html, body {
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: #0a0e1a;
+        font-family: 'Microsoft YaHei', sans-serif;
+        color: #e0e6ff;
+      }
+      #app {
+        display: flex;
+        width: 100%;
+        height: 100%;
+      }
+      #canvas-container {
+        flex: 1;
+        position: relative;
+        background: #02030a;
+      }
+      #editorCanvas {
+        display: block;
+        cursor: crosshair;
+      }
+      #toolbar {
+        position: absolute;
+        top: 16px;
+        left: 16px;
+        display: flex;
+        gap: 8px;
+        padding: 10px 14px;
+        background: rgba(10, 15, 40, 0.85);
+        backdrop-filter: blur(10px);
+        border: 1px solid rgba(100, 150, 255, 0.25);
+        border-radius: 10px;
+      }
+      .tool-btn {
+        padding: 8px 14px;
+        background: rgba(60, 80, 160, 0.3);
+        color: #c0d0ff;
+        border: 1px solid rgba(100, 150, 255, 0.3);
+        border-radius: 6px;
+        cursor: pointer;
+        font-size: 13px;
+        transition: all 0.2s;
+      }
+      .tool-btn:hover {
+        background: rgba(80, 120, 220, 0.4);
+        border-color: rgba(140, 180, 255, 0.5);
+      }
+      .tool-btn.active {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        border-color: transparent;
+      }
+      #canvas-hint {
+        position: absolute;
+        bottom: 20px;
+        left: 50%;
+        transform: translateX(-50%);
+        padding: 10px 20px;
+        background: rgba(10, 15, 40, 0.8);
+        border: 1px solid rgba(100, 150, 255, 0.2);
+        border-radius: 8px;
+        font-size: 13px;
+        color: #a0c4ff;
+        pointer-events: none;
+      }
+      #sidebar {
+        width: 380px;
+        background: linear-gradient(180deg, #0d1228 0%, #080c1c 100%);
+        border-left: 1px solid rgba(100, 150, 255, 0.15);
+        overflow-y: auto;
+        padding: 20px;
+      }
+      .section {
+        margin-bottom: 24px;
+      }
+      .section-title {
+        font-size: 14px;
+        font-weight: bold;
+        color: #a0c4ff;
+        margin-bottom: 12px;
+        padding-bottom: 8px;
+        border-bottom: 1px solid rgba(100, 150, 255, 0.2);
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .section-title .status-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: #666;
+      }
+      .section-title .status-dot.ok {
+        background: #4ade80;
+        box-shadow: 0 0 8px rgba(74, 222, 128, 0.5);
+      }
+      .section-title .status-dot.warn {
+        background: #fbbf24;
+        box-shadow: 0 0 8px rgba(251, 191, 36, 0.5);
+      }
+      .section-title .status-dot.err {
+        background: #f87171;
+        box-shadow: 0 0 8px rgba(248, 113, 113, 0.5);
+      }
+      .form-group {
+        margin-bottom: 12px;
+      }
+      .form-group label {
+        display: block;
+        font-size: 12px;
+        color: #8899bb;
+        margin-bottom: 4px;
+      }
+      .form-group input,
+      .form-group textarea {
+        width: 100%;
+        padding: 8px 10px;
+        background: rgba(20, 30, 60, 0.6);
+        border: 1px solid rgba(100, 150, 255, 0.2);
+        border-radius: 6px;
+        color: #e0e6ff;
+        font-size: 13px;
+        font-family: inherit;
+        transition: border-color 0.2s;
+      }
+      .form-group input:focus,
+      .form-group textarea:focus {
+        outline: none;
+        border-color: rgba(140, 180, 255, 0.6);
+      }
+      .form-group textarea {
+        resize: vertical;
+        min-height: 60px;
+      }
+      .form-row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+      }
+      .point-list {
+        max-height: 200px;
+        overflow-y: auto;
+        border: 1px solid rgba(100, 150, 255, 0.15);
+        border-radius: 8px;
+        background: rgba(15, 22, 45, 0.4);
+      }
+      .point-item {
+        padding: 10px 12px;
+        border-bottom: 1px solid rgba(100, 150, 255, 0.08);
+        cursor: pointer;
+        transition: background 0.15s;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+      .point-item:last-child {
+        border-bottom: none;
+      }
+      .point-item:hover {
+        background: rgba(60, 90, 180, 0.2);
+      }
+      .point-item.selected {
+        background: rgba(102, 126, 234, 0.25);
+        border-left: 3px solid #667eea;
+      }
+      .point-item .point-info {
+        flex: 1;
+      }
+      .point-item .point-id {
+        font-size: 12px;
+        color: #667eea;
+        font-family: monospace;
+      }
+      .point-item .point-name {
+        font-size: 13px;
+        color: #c0d0ff;
+      }
+      .point-item .point-freq {
+        font-size: 11px;
+        color: #8899bb;
+      }
+      .point-item .delete-btn {
+        padding: 4px 8px;
+        background: rgba(248, 113, 113, 0.2);
+        border: 1px solid rgba(248, 113, 113, 0.3);
+        color: #f87171;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 11px;
+      }
+      .point-item .delete-btn:hover {
+        background: rgba(248, 113, 113, 0.4);
+      }
+      .edge-list {
+        max-height: 180px;
+        overflow-y: auto;
+        border: 1px solid rgba(100, 150, 255, 0.15);
+        border-radius: 8px;
+        background: rgba(15, 22, 45, 0.4);
+      }
+      .edge-item {
+        padding: 8px 12px;
+        border-bottom: 1px solid rgba(100, 150, 255, 0.08);
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        font-size: 12px;
+      }
+      .edge-item:last-child {
+        border-bottom: none;
+      }
+      .edge-info {
+        flex: 1;
+      }
+      .edge-pair {
+        color: #a0c4ff;
+        font-family: monospace;
+      }
+      .edge-ratio {
+        color: #8899bb;
+        margin-left: 8px;
+      }
+      .edge-ratio.harmonic {
+        color: #4ade80;
+      }
+      .edge-ratio.disharmony {
+        color: #f87171;
+      }
+      .edge-delete {
+        padding: 3px 7px;
+        background: rgba(248, 113, 113, 0.2);
+        border: 1px solid rgba(248, 113, 113, 0.3);
+        color: #f87171;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 11px;
+      }
+      .check-list {
+        list-style: none;
+      }
+      .check-item {
+        display: flex;
+        align-items: flex-start;
+        gap: 8px;
+        padding: 6px 0;
+        font-size: 12px;
+      }
+      .check-icon {
+        flex-shrink: 0;
+        width: 18px;
+        height: 18px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 50%;
+        font-size: 11px;
+        font-weight: bold;
+      }
+      .check-icon.ok {
+        background: rgba(74, 222, 128, 0.2);
+        color: #4ade80;
+      }
+      .check-icon.err {
+        background: rgba(248, 113, 113, 0.2);
+        color: #f87171;
+      }
+      .check-text {
+        color: #a0b4d0;
+        line-height: 1.6;
+      }
+      .check-text.ok {
+        color: #86efac;
+      }
+      .check-text.err {
+        color: #fca5a5;
+      }
+      .action-buttons {
+        display: flex;
+        gap: 8px;
+        margin-top: 16px;
+      }
+      .action-btn {
+        flex: 1;
+        padding: 10px;
+        border: none;
+        border-radius: 8px;
+        cursor: pointer;
+        font-size: 13px;
+        font-weight: 500;
+        transition: all 0.2s;
+      }
+      .action-btn.primary {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+      }
+      .action-btn.primary:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+      }
+      .action-btn.secondary {
+        background: rgba(60, 80, 160, 0.3);
+        color: #c0d0ff;
+        border: 1px solid rgba(100, 150, 255, 0.3);
+      }
+      .action-btn.secondary:hover {
+        background: rgba(80, 120, 220, 0.4);
+      }
+      .action-btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+        transform: none !important;
+      }
+      .type-toggle {
+        display: flex;
+        gap: 4px;
+        margin-bottom: 8px;
+      }
+      .type-toggle button {
+        flex: 1;
+        padding: 6px;
+        background: rgba(20, 30, 60, 0.6);
+        border: 1px solid rgba(100, 150, 255, 0.2);
+        border-radius: 5px;
+        color: #8899bb;
+        cursor: pointer;
+        font-size: 11px;
+      }
+      .type-toggle button.active {
+        background: rgba(102, 126, 234, 0.3);
+        border-color: rgba(102, 126, 234, 0.6);
+        color: #c0d0ff;
+      }
+      .json-preview {
+        background: rgba(0, 0, 0, 0.4);
+        border: 1px solid rgba(100, 150, 255, 0.15);
+        border-radius: 8px;
+        padding: 12px;
+        max-height: 200px;
+        overflow-y: auto;
+        font-family: monospace;
+        font-size: 11px;
+        color: #88ccaa;
+        white-space: pre-wrap;
+        word-break: break-all;
+      }
+      .toast {
+        position: fixed;
+        top: 20px;
+        left: 50%;
+        transform: translateX(-50%) translateY(-100px);
+        padding: 12px 24px;
+        background: rgba(10, 15, 40, 0.95);
+        border: 1px solid rgba(100, 150, 255, 0.4);
+        border-radius: 10px;
+        color: #fff;
+        font-size: 14px;
+        z-index: 1000;
+        transition: transform 0.3s ease;
+        pointer-events: none;
+      }
+      .toast.show {
+        transform: translateX(-50%) translateY(0);
+      }
+      .toast.success {
+        border-color: rgba(74, 222, 128, 0.5);
+        color: #86efac;
+      }
+      .toast.error {
+        border-color: rgba(248, 113, 113, 0.5);
+        color: #fca5a5;
+      }
+      .empty-hint {
+        padding: 20px;
+        text-align: center;
+        color: #556688;
+        font-size: 12px;
+      }
+      ::-webkit-scrollbar {
+        width: 6px;
+      }
+      ::-webkit-scrollbar-track {
+        background: rgba(0, 0, 0, 0.2);
+      }
+      ::-webkit-scrollbar-thumb {
+        background: rgba(100, 150, 255, 0.3);
+        border-radius: 3px;
+      }
+    </style>
+    <script type="module" crossorigin src="/assets/editor-Bi_AXFz1.js"></script>
+    <link rel="modulepreload" crossorigin href="/assets/utils-ByO1V-mx.js">
+  </head>
+  <body>
+    <div id="app">
+      <div id="canvas-container">
+        <canvas id="editorCanvas"></canvas>
+        <div id="toolbar">
+          <button class="tool-btn active" data-tool="place" title="点击画布放置星点">📍 放置星点</button>
+          <button class="tool-btn" data-tool="select" title="选中并拖动星点">✋ 选择/拖动</button>
+          <button class="tool-btn" data-tool="connect" title="依次点击两个星点创建连线">🔗 连接星脉</button>
+        </div>
+        <div id="canvas-hint">点击画布空白处放置星点</div>
+      </div>
+      <div id="sidebar">
+        <div class="section">
+          <div class="section-title">📋 关卡基础信息</div>
+          <div class="form-group">
+            <label>关卡ID</label>
+            <input type="number" id="level-id" value="4" min="1" />
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label>关卡名称</label>
+              <input type="text" id="level-name" placeholder="如：苍穹神龙" />
+            </div>
+            <div class="form-group">
+              <label>生物名称</label>
+              <input type="text" id="creature-name" placeholder="如：苍龙" />
+            </div>
+          </div>
+          <div class="form-group">
+            <label>生物描述</label>
+            <textarea id="creature-desc" placeholder="描述这个神话生物..."></textarea>
+          </div>
+        </div>
+
+        <div class="section">
+          <div class="section-title">
+            <span class="status-dot" id="points-status"></span>
+            ⭐ 星点列表 (<span id="points-count">0</span>)
+          </div>
+          <div id="point-list" class="point-list">
+            <div class="empty-hint">还没有星点，点击画布放置</div>
+          </div>
+        </div>
+
+        <div class="section" id="selected-point-section" style="display:none;">
+          <div class="section-title">✏️ 编辑选中星点</div>
+          <div class="type-toggle">
+            <button data-type="anchor" class="active">主星 (a/b/c)</button>
+            <button data-type="helper">辅星 (d/e/f)</button>
+          </div>
+          <div class="form-group">
+            <label>名称</label>
+            <input type="text" id="point-name" placeholder="如：龙角" />
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label>频率 (Hz)</label>
+              <input type="number" id="point-freq" step="0.1" min="0.1" value="1.0" />
+            </div>
+            <div class="form-group">
+              <label>大小</label>
+              <input type="number" id="point-size" step="0.1" min="1" max="10" value="3.0" />
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label>X 坐标</label>
+              <input type="number" id="point-x" step="0.01" min="0" max="1" />
+            </div>
+            <div class="form-group">
+              <label>Y 坐标</label>
+              <input type="number" id="point-y" step="0.01" min="0" max="1" />
+            </div>
+          </div>
+          <div class="form-group">
+            <label>亮度</label>
+            <input type="number" id="point-brightness" step="0.05" min="0" max="1" value="0.7" />
+          </div>
+        </div>
+
+        <div class="section">
+          <div class="section-title">
+            <span class="status-dot" id="edges-status"></span>
+            🔗 星脉连线 (<span id="edges-count">0</span>)
+          </div>
+          <div id="edge-list" class="edge-list">
+            <div class="empty-hint">还没有连线，切换到"连接星脉"工具点击两个星点</div>
+          </div>
+        </div>
+
+        <div class="section">
+          <div class="section-title">
+            <span class="status-dot" id="playable-status"></span>
+            ✅ 可游玩条件
+          </div>
+          <ul id="check-list" class="check-list"></ul>
+        </div>
+
+        <div class="section">
+          <div class="section-title">💾 导出数据</div>
+          <button class="action-btn secondary" id="btn-preview" style="width:100%;margin-bottom:8px;">📄 预览 JSON</button>
+          <div id="json-preview" class="json-preview" style="display:none;"></div>
+          <div class="action-buttons">
+            <button class="action-btn secondary" id="btn-copy">📋 复制</button>
+            <button class="action-btn primary" id="btn-save" disabled>💾 保存到后端</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div id="toast" class="toast"></div>
+  </body>
+</html>
