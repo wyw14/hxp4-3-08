@@ -86,4 +86,7 @@ export interface VerifyResult {
   isDefinedEdge: boolean;
   frequencies?: Record<string, number>;
   ratio?: [number, number] | null;
+  harmonicError?: number;
+  harmonicErrorThreshold?: number;
+  maxDenominator?: number;
 }

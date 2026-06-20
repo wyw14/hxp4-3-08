@@ -8,7 +8,11 @@ import type {
 import {
   generateBackgroundStars,
   distance,
-  rotatePoint
+  rotatePoint,
+  validateHarmonicRatio,
+  HARMONIC_ERROR_THRESHOLD,
+  HARMONIC_MAX_DENOMINATOR,
+  type HarmonicResult
 } from './utils';
 
 type ToolMode = 'place' | 'select' | 'connect';
@@ -254,19 +258,20 @@ class LevelEditor {
 
     const f1 = fromPoint.frequency;
     const f2 = toPoint.frequency;
-    const ratio = this.calculateRatio(f1, f2);
+    const result = this.validateHarmonic(f1, f2);
 
     this.state.edges.push({
       from,
       to,
-      frequencyRatio: ratio
+      frequencyRatio: result.ratio
     });
 
-    const isHarmonic = this.isSimpleRatio(ratio);
-    if (isHarmonic) {
-      this.showToast(`已添加连线 ${from}→${to} (比例 ${ratio[0]}:${ratio[1]})`, 'success');
+    if (result.isHarmonic) {
+      const errorPct = (result.error * 100).toFixed(2);
+      this.showToast(`已添加连线 ${from}→${to} (比例 ${result.ratio[0]}:${result.ratio[1]}, 误差 ${errorPct}%)`, 'success');
     } else {
-      this.showToast(`已添加连线，但频率 ${f1} 和 ${f2} 不是简单比例`, 'error');
+      const errorPct = (result.error * 100).toFixed(2);
+      this.showToast(`频率 ${f1}Hz 和 ${f2}Hz 不是简单谐波 (误差 ${errorPct}% > ${HARMONIC_ERROR_THRESHOLD * 100}%)`, 'error');
     }
     this.updateUI();
   }
@@ -276,47 +281,8 @@ class LevelEditor {
     this.updateUI();
   }
 
-  private gcd(a: number, b: number): number {
-    a = Math.abs(a);
-    b = Math.abs(b);
-    while (b > 0.0001) {
-      const t = b;
-      b = a % b;
-      a = t;
-    }
-    return a;
-  }
-
-  private calculateRatio(f1: number, f2: number): [number, number] {
-    const maxF = Math.max(f1, f2);
-    const minF = Math.min(f1, f2);
-    if (minF < 0.0001) return [1, 1];
-
-    const ratio = maxF / minF;
-    let best: [number, number] = [1, Math.round(ratio)];
-    let bestError = Infinity;
-
-    for (let denom = 1; denom <= 10; denom++) {
-      const numer = Math.round(ratio * denom);
-      if (numer < 1 || numer > 10) continue;
-      const error = Math.abs(ratio - numer / denom);
-      if (error < bestError) {
-        bestError = error;
-        best = [denom, numer];
-      }
-    }
-
-    if (f1 > f2) {
-      return [best[1], best[0]];
-    }
-    return best;
-  }
-
-  private isSimpleRatio(ratio: [number, number]): boolean {
-    const [a, b] = ratio;
-    const g = this.gcd(a, b);
-    const simplified = [a / g, b / g];
-    return Math.max(simplified[0], simplified[1]) <= 10;
+  private validateHarmonic(f1: number, f2: number): HarmonicResult {
+    return validateHarmonicRatio(f1, f2, HARMONIC_MAX_DENOMINATOR, HARMONIC_ERROR_THRESHOLD);
   }
 
   private bindUIEvents(): void {
@@ -407,7 +373,7 @@ class LevelEditor {
       if (preview) {
         if (preview.style.display === 'none') {
           preview.style.display = 'block';
-          preview.textContent = JSON.stringify(this.buildLevelData(), null, 2);
+          preview.textContent = JSON.stringify(this.buildLevelDataForPreview(), null, 2);
         } else {
           preview.style.display = 'none';
         }
@@ -433,7 +399,8 @@ class LevelEditor {
         const fromP = this.state.anchorPoints.find(p => p.id === edge.from);
         const toP = this.state.anchorPoints.find(p => p.id === edge.to);
         if (fromP && toP) {
-          edge.frequencyRatio = this.calculateRatio(fromP.frequency, toP.frequency);
+          const result = this.validateHarmonic(fromP.frequency, toP.frequency);
+          edge.frequencyRatio = result.ratio;
         }
       }
     }
@@ -541,11 +508,15 @@ class LevelEditor {
 
     container.innerHTML = '';
     this.state.edges.forEach((edge, idx) => {
-      const isHarmonic = this.isSimpleRatio(edge.frequencyRatio);
       const fromP = this.state.anchorPoints.find(p => p.id === edge.from);
       const toP = this.state.anchorPoints.find(p => p.id === edge.to);
+      const result = fromP && toP
+        ? this.validateHarmonic(fromP.frequency, toP.frequency)
+        : { isHarmonic: false, error: Infinity };
+      const isHarmonic = result.isHarmonic;
       const fromName = fromP?.name || edge.from;
       const toName = toP?.name || edge.to;
+      const errorPct = (result.error * 100).toFixed(2);
       const div = document.createElement('div');
       div.className = 'edge-item';
       div.innerHTML = `
@@ -553,7 +524,7 @@ class LevelEditor {
           <span class="edge-pair">${edge.from} → ${edge.to}</span>
           <span style="color:#667;">(${fromName} - ${toName})</span>
           <span class="edge-ratio ${isHarmonic ? 'harmonic' : 'disharmony'}">
-            [${edge.frequencyRatio[0]}:${edge.frequencyRatio[1]}] ${isHarmonic ? '✓' : '✗ 非谐波'}
+            [${edge.frequencyRatio[0]}:${edge.frequencyRatio[1]}] ${isHarmonic ? '✓' : `✗ 误差${errorPct}%`}
           </span>
         </div>
         <button class="edge-delete" data-idx="${idx}">删</button>
@@ -578,7 +549,13 @@ class LevelEditor {
     const hasEnoughPoints = anchorPoints.length >= 2;
     const hasEnoughEdges = this.state.edges.length >= 1;
 
-    const allEdgesHarmonic = this.state.edges.every(e => this.isSimpleRatio(e.frequencyRatio));
+    const allEdgesHarmonic = this.state.edges.every(e => {
+      const fromP = this.state.anchorPoints.find(p => p.id === e.from);
+      const toP = this.state.anchorPoints.find(p => p.id === e.to);
+      if (!fromP || !toP) return false;
+      const result = this.validateHarmonic(fromP.frequency, toP.frequency);
+      return result.isHarmonic;
+    });
 
     const edgeKeys = this.state.edges.map(e => [e.from, e.to].sort().join('-'));
     const noDuplicateEdges = new Set(edgeKeys).size === edgeKeys.length;
@@ -619,7 +596,7 @@ class LevelEditor {
       { ok: v.hasLevelInfo, text: '已填写关卡ID、名称、生物名称' },
       { ok: v.hasEnoughPoints, text: `至少有 2 个主星点 (当前 ${this.state.anchorPoints.filter(p => p.id.startsWith('a') || p.id.startsWith('b') || p.id.startsWith('c')).length})` },
       { ok: v.hasEnoughEdges, text: `至少有 1 条星脉连线 (当前 ${this.state.edges.length})` },
-      { ok: v.allEdgesHarmonic, text: '所有连线频率都是简单谐波比例 (如 1:2, 2:3)' },
+      { ok: v.allEdgesHarmonic, text: `所有连线频率都是简单谐波 (误差≤${HARMONIC_ERROR_THRESHOLD * 100}%, 分母≤${HARMONIC_MAX_DENOMINATOR})` },
       { ok: v.anchorsHaveEdges, text: '每个主星点至少参与一条连线' },
       { ok: v.noDuplicateEdges, text: '没有重复的连线' }
     ];
@@ -680,7 +657,70 @@ class LevelEditor {
     };
   }
 
+  private buildLevelDataForPreview(): object {
+    const levelData = this.buildLevelData();
+    const edgesWithValidation = this.state.edges.map(e => {
+      const fromP = this.state.anchorPoints.find(p => p.id === e.from);
+      const toP = this.state.anchorPoints.find(p => p.id === e.to);
+      const result = fromP && toP
+        ? this.validateHarmonic(fromP.frequency, toP.frequency)
+        : null;
+      return {
+        ...e,
+        _validation: result ? {
+          isHarmonic: result.isHarmonic,
+          error: `${(result.error * 100).toFixed(4)}%`,
+          errorThreshold: `${HARMONIC_ERROR_THRESHOLD * 100}%`,
+          maxDenominator: HARMONIC_MAX_DENOMINATOR,
+          fromFrequency: fromP?.frequency,
+          toFrequency: toP?.frequency
+        } : null
+      };
+    });
+    return {
+      ...levelData,
+      edges: edgesWithValidation,
+      _validationSummary: {
+        harmonicErrorThreshold: `${HARMONIC_ERROR_THRESHOLD * 100}%`,
+        maxDenominator: HARMONIC_MAX_DENOMINATOR,
+        totalEdges: this.state.edges.length,
+        validHarmonicEdges: this.state.edges.filter(e => {
+          const fromP = this.state.anchorPoints.find(p => p.id === e.from);
+          const toP = this.state.anchorPoints.find(p => p.id === e.to);
+          if (!fromP || !toP) return false;
+          return this.validateHarmonic(fromP.frequency, toP.frequency).isHarmonic;
+        }).length
+      }
+    };
+  }
+
   private async saveToBackend(): Promise<void> {
+    const validation = this.getValidation();
+
+    const invalidEdges = this.state.edges.filter(e => {
+      const fromP = this.state.anchorPoints.find(p => p.id === e.from);
+      const toP = this.state.anchorPoints.find(p => p.id === e.to);
+      if (!fromP || !toP) return true;
+      const result = this.validateHarmonic(fromP.frequency, toP.frequency);
+      return !result.isHarmonic;
+    });
+
+    if (invalidEdges.length > 0) {
+      const details = invalidEdges.map(e => {
+        const fromP = this.state.anchorPoints.find(p => p.id === e.from);
+        const toP = this.state.anchorPoints.find(p => p.id === e.to);
+        const result = fromP && toP ? this.validateHarmonic(fromP.frequency, toP.frequency) : null;
+        return `${e.from}→${e.to} (误差${result ? (result.error * 100).toFixed(2) : '?'}%)`;
+      }).join(', ');
+      this.showToast(`保存失败：${invalidEdges.length} 条连线不满足谐波条件: ${details}`, 'error');
+      return;
+    }
+
+    if (!validation.allGood) {
+      this.showToast('保存失败：不满足可游玩条件，请检查右侧验证列表', 'error');
+      return;
+    }
+
     const data = this.buildLevelData();
     try {
       const res = await fetch('/api/levels', {
@@ -803,7 +843,8 @@ class LevelEditor {
 
       const fromPos = this.getScreenPos(from);
       const toPos = this.getScreenPos(to);
-      const isHarmonic = this.isSimpleRatio(edge.frequencyRatio);
+      const result = this.validateHarmonic(from.frequency, to.frequency);
+      const isHarmonic = result.isHarmonic;
 
       this.ctx.beginPath();
       this.ctx.moveTo(fromPos.x, fromPos.y);

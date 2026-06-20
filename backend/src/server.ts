@@ -47,22 +47,75 @@ function gcd(a: number, b: number): number {
   return a;
 }
 
-function isSimpleFrequencyRatio(f1: number, f2: number, maxDenom: number = 10): boolean {
+const HARMONIC_MAX_DENOMINATOR = 10;
+const HARMONIC_ERROR_THRESHOLD = 0.02;
+
+interface HarmonicResult {
+  isHarmonic: boolean;
+  ratio: [number, number];
+  error: number;
+  maxDenominator: number;
+  errorThreshold: number;
+}
+
+function validateHarmonicRatio(
+  f1: number,
+  f2: number,
+  maxDenominator: number = HARMONIC_MAX_DENOMINATOR,
+  errorThreshold: number = HARMONIC_ERROR_THRESHOLD
+): HarmonicResult {
   const maxF = Math.max(f1, f2);
   const minF = Math.min(f1, f2);
-  if (minF < 0.0001) return false;
 
-  const ratio = maxF / minF;
+  if (minF < 0.0001) {
+    return {
+      isHarmonic: false,
+      ratio: [1, 1],
+      error: Infinity,
+      maxDenominator,
+      errorThreshold
+    };
+  }
 
-  for (let denom = 1; denom <= maxDenom; denom++) {
-    const numer = ratio * denom;
-    const rounded = Math.round(numer);
-    if (Math.abs(numer - rounded) < 0.02 && rounded <= maxDenom && rounded > 0) {
-      return true;
+  const actualRatio = maxF / minF;
+  let bestResult: HarmonicResult = {
+    isHarmonic: false,
+    ratio: [1, Math.round(actualRatio)],
+    error: Infinity,
+    maxDenominator,
+    errorThreshold
+  };
+
+  for (let denom = 1; denom <= maxDenominator; denom++) {
+    for (let numer = 1; numer <= maxDenominator; numer++) {
+      const expectedRatio = numer / denom;
+      const error = Math.abs(actualRatio - expectedRatio);
+
+      if (error < bestResult.error) {
+        bestResult = {
+          isHarmonic: error <= errorThreshold,
+          ratio: [denom, numer],
+          error,
+          maxDenominator,
+          errorThreshold
+        };
+      }
     }
   }
 
-  return false;
+  if (f1 > f2) {
+    return {
+      ...bestResult,
+      ratio: [bestResult.ratio[1], bestResult.ratio[0]] as [number, number]
+    };
+  }
+
+  return bestResult;
+}
+
+function isSimpleFrequencyRatio(f1: number, f2: number, maxDenom: number = 10): boolean {
+  const result = validateHarmonicRatio(f1, f2, maxDenom, HARMONIC_ERROR_THRESHOLD);
+  return result.isHarmonic;
 }
 
 app.get('/api/levels', (_req, res) => {
@@ -147,20 +200,21 @@ app.get('/api/levels/:id/verify', (req, res) => {
 
   const f1 = fromPoint.frequency;
   const f2 = toPoint.frequency;
-  const maxF = Math.max(f1, f2);
-  const minF = Math.min(f1, f2);
-  const isHarmonic = isSimpleFrequencyRatio(f1, f2);
+  const harmonicResult = validateHarmonicRatio(f1, f2, HARMONIC_MAX_DENOMINATOR, HARMONIC_ERROR_THRESHOLD);
 
   res.json({
     success: true,
-    valid: isDefinedEdge && isHarmonic,
-    isHarmonic,
+    valid: isDefinedEdge && harmonicResult.isHarmonic,
+    isHarmonic: harmonicResult.isHarmonic,
     isDefinedEdge,
     frequencies: {
       [from]: f1,
       [to]: f2
     },
-    ratio: isHarmonic ? [minF, maxF] : null
+    ratio: harmonicResult.isHarmonic ? harmonicResult.ratio : null,
+    harmonicError: harmonicResult.error,
+    harmonicErrorThreshold: HARMONIC_ERROR_THRESHOLD,
+    maxDenominator: HARMONIC_MAX_DENOMINATOR
   });
 });
 
@@ -171,6 +225,31 @@ app.post('/api/levels', (req, res) => {
     res.status(400).json({
       success: false,
       error: 'Invalid level data'
+    });
+    return;
+  }
+
+  const invalidEdges: string[] = [];
+  for (const edge of newLevel.edges) {
+    const fromP = newLevel.anchorPoints.find(p => p.id === edge.from);
+    const toP = newLevel.anchorPoints.find(p => p.id === edge.to);
+    if (!fromP || !toP) {
+      invalidEdges.push(`${edge.from}→${edge.to}: 星点不存在`);
+      continue;
+    }
+    const result = validateHarmonicRatio(fromP.frequency, toP.frequency, HARMONIC_MAX_DENOMINATOR, HARMONIC_ERROR_THRESHOLD);
+    if (!result.isHarmonic) {
+      invalidEdges.push(`${edge.from}→${edge.to}: 频率 ${fromP.frequency}Hz 和 ${toP.frequency}Hz 不是简单谐波 (误差 ${(result.error * 100).toFixed(4)}% > ${HARMONIC_ERROR_THRESHOLD * 100}%)`);
+    }
+  }
+
+  if (invalidEdges.length > 0) {
+    res.status(400).json({
+      success: false,
+      error: `有 ${invalidEdges.length} 条连线不满足谐波条件`,
+      invalidEdges,
+      harmonicErrorThreshold: HARMONIC_ERROR_THRESHOLD,
+      maxDenominator: HARMONIC_MAX_DENOMINATOR
     });
     return;
   }
@@ -187,7 +266,13 @@ app.post('/api/levels', (req, res) => {
   if (saveLevels(data)) {
     res.json({
       success: true,
-      level: newLevel
+      level: newLevel,
+      harmonicValidation: {
+        errorThreshold: HARMONIC_ERROR_THRESHOLD,
+        maxDenominator: HARMONIC_MAX_DENOMINATOR,
+        totalEdges: newLevel.edges.length,
+        allHarmonic: true
+      }
     });
   } else {
     res.status(500).json({

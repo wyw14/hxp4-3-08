@@ -156,3 +156,69 @@ export function colorToRgb(color: string): { r: number; g: number; b: number } {
 export function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
 }
+
+export const HARMONIC_MAX_DENOMINATOR = 10;
+export const HARMONIC_ERROR_THRESHOLD = 0.02;
+
+export interface HarmonicResult {
+  isHarmonic: boolean;
+  ratio: [number, number];
+  error: number;
+  maxDenominator: number;
+  errorThreshold: number;
+}
+
+export function validateHarmonicRatio(
+  f1: number,
+  f2: number,
+  maxDenominator: number = HARMONIC_MAX_DENOMINATOR,
+  errorThreshold: number = HARMONIC_ERROR_THRESHOLD
+): HarmonicResult {
+  const maxF = Math.max(f1, f2);
+  const minF = Math.min(f1, f2);
+
+  if (minF < 0.0001) {
+    return {
+      isHarmonic: false,
+      ratio: [1, 1],
+      error: Infinity,
+      maxDenominator,
+      errorThreshold
+    };
+  }
+
+  const actualRatio = maxF / minF;
+  let bestResult: HarmonicResult = {
+    isHarmonic: false,
+    ratio: [1, Math.round(actualRatio)],
+    error: Infinity,
+    maxDenominator,
+    errorThreshold
+  };
+
+  for (let denom = 1; denom <= maxDenominator; denom++) {
+    for (let numer = 1; numer <= maxDenominator; numer++) {
+      const expectedRatio = numer / denom;
+      const error = Math.abs(actualRatio - expectedRatio);
+
+      if (error < bestResult.error) {
+        bestResult = {
+          isHarmonic: error <= errorThreshold,
+          ratio: [denom, numer],
+          error,
+          maxDenominator,
+          errorThreshold
+        };
+      }
+    }
+  }
+
+  if (f1 > f2) {
+    return {
+      ...bestResult,
+      ratio: [bestResult.ratio[1], bestResult.ratio[0]] as [number, number]
+    };
+  }
+
+  return bestResult;
+}
